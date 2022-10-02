@@ -22,8 +22,44 @@ type ExampleReply struct {
 	Y int
 }
 
-// Add your RPC definitions here.
+// JobCondition condition of job
+type JobCondition int
 
+// JobType type of job
+type JobType int
+
+const (
+	JobWorking = iota
+	JobWaiting
+	JobDone
+)
+
+type Args struct{}
+
+type Reply struct {
+	TaskType string
+
+	TaskNum int
+
+	ReduceTasks int
+
+	MapFile string
+
+	MapTasks int
+}
+
+type TaskType int
+
+const (
+	Map    TaskType = 1
+	Reduce TaskType = 2
+	Done   TaskType = 3
+)
+
+//condition of coordinator
+type Condition int
+
+// Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.
