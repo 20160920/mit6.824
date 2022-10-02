@@ -59,6 +59,12 @@ const (
 //condition of coordinator
 type Condition int
 
+const (
+	MapPhase = iota
+	ReducePhase
+	AllDone
+)
+
 // Add your RPC definitions here.
 
 // Cook up a unique-ish UNIX-domain socket name

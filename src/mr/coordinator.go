@@ -1,10 +1,16 @@
 package mr
 
-import "log"
+import (
+	"fmt"
+	"log"
+	"sync"
+)
 import "net"
 import "os"
 import "net/rpc"
 import "net/http"
+
+var mu sync.Mutex
 
 type Task struct {
 	TaskType   TaskType
@@ -21,6 +27,9 @@ type Coordinator struct {
 
 	ReducerNum int
 	MapNum     int
+
+	Status Condition
+	isDone bool
 }
 
 func (c *Coordinator) generateTaskId() int {
@@ -62,11 +71,10 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
-
-	// Your code here.
-
-	return ret
+	mu.Lock()
+	defer mu.Unlock()
+	fmt.Println("Done!!!!!!")
+	return c.Status == AllDone
 }
 
 //
@@ -87,13 +95,19 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	c.server()
 
-	go c.CrashHandler()
-
 	return &c
 }
 
 func (c *Coordinator) makeMapJobs(files []string) {
 	for _, v := range files {
 		id := c.generateTaskId()
+		task := Task{
+			TaskId:     id,
+			TaskType:   Map,
+			InputFile:  []string{v},
+			ReducerNum: c.ReducerNum,
+		}
+		c.Map <- &task
 	}
+	fmt.Println("making map tasks completed")
 }
