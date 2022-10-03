@@ -37,7 +37,7 @@ const (
 type Args struct{}
 
 type Reply struct {
-	TaskType string
+	TaskType TaskType
 
 	TaskNum int
 

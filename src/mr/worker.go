@@ -1,6 +1,12 @@
 package mr
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"sort"
+)
 import "log"
 import "hash/fnv"
 import "net/rpc"
@@ -12,6 +18,12 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+type ByKey []KeyValue
+
+func (b ByKey) Len() int           { return len(b) }
+func (b ByKey) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
+func (b ByKey) Less(i, j int) bool { return b[i].Key < b[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -30,10 +42,120 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	for {
+		args := Args{}
+		reply := Reply{}
+		call("Coordinator.HandleGetTask", &args, &reply)
 
+		switch reply.TaskType {
+		case Map:
+
+		case Done:
+			os.Exit(0)
+		}
+	}
 	// uncomment to send the Example RPC to the coordinator.
 	CallExample()
 
+}
+
+func performMap(filename string, taskNum int, reduceTaskNum int, mapf func(string, string) []KeyValue) {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open  %s", filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot red %s", filename)
+	}
+	file.Close()
+	kva := mapf(filename, string(content))
+	tmpFiles, tmpFilenames := []*os.File{}, []string{}
+	encoders := []*json.Encoder{}
+
+	for r := 0; r < reduceTaskNum; r++ {
+		tmpFile, err := ioutil.TempFile("", "")
+		if err != nil {
+			log.Fatalf("connot open tmpFile")
+		}
+		tmpFiles = append(tmpFiles, tmpFile)
+		tmpFilename := tmpFile.Name()
+		tmpFilenames = append(tmpFilenames, tmpFilename)
+		enc := json.NewEncoder(tmpFile)
+		encoders = append(encoders, enc)
+	}
+
+	for _, kv := range kva {
+		r := ihash(kv.Key) % reduceTaskNum
+		encoders[r].Encode(&kv)
+	}
+
+	for _, f := range tmpFiles {
+		f.Close()
+	}
+
+	for r := 0; r < reduceTaskNum; r++ {
+		finalizeIntermediateFile(tmpFilenames[r], taskNum, r)
+	}
+}
+
+func getIntermediateFile(mapTaskNum int, redTaskNum int) string {
+	return fmt.Sprintf("mr-%d-%d", mapTaskNum, redTaskNum)
+}
+
+func finalizeIntermediateFile(tmpFile string, mapTaskNum int, redTaskNum int) {
+	finalFile := getIntermediateFile(mapTaskNum, redTaskNum)
+	os.Rename(tmpFile, finalFile)
+}
+
+func performReduce(taskNum int, mapTaskNum int, reducef func(string, []string) string) {
+	kva := []KeyValue{}
+	for i := 0; i < taskNum; i++ {
+		filename := getIntermediateFile(i, taskNum)
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
+		file.Close()
+	}
+	sort.Sort(ByKey(kva))
+
+	tmpFile, err := ioutil.TempFile("", "")
+	if err != nil {
+		log.Fatalf("cannot open tmpfile")
+	}
+	tmpFilename := tmpFile.Name()
+
+	keyBegin := 0
+	for keyBegin < len(kva) {
+		keyEnd := keyBegin + 1
+		for keyEnd < len(kva) && kva[keyEnd].Key == kva[keyBegin].Key {
+			keyEnd++
+		}
+		values := []string{}
+		for k := keyBegin; k < keyEnd; k++ {
+			values = append(values, kva[k].Value)
+		}
+		output := reducef(kva[keyBegin].Key, values)
+
+		fmt.Fprintf(tmpFile, "%v %v\n", kva[keyBegin].Key, output)
+
+		keyBegin = keyEnd
+	}
+	finalizeReduceFile(tmpFilename, taskNum)
+}
+
+func finalizeReduceFile(tmpFilename string, taskNum int) {
+	finalFile := fmt.Sprintf("mr-out-%d", taskNum)
+	os.Rename(tmpFilename, finalFile)
 }
 
 //
