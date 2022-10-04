@@ -45,14 +45,19 @@ func Worker(mapf func(string, string) []KeyValue,
 	for {
 		args := Args{}
 		reply := Reply{}
-		call("Coordinator.HandleGetTask", &args, &reply)
+		call("Coordinator.HandleTask", &args, &reply)
 
 		switch reply.TaskType {
 		case Map:
-
+			performMap(reply.MapFile, reply.TaskNum, reply.ReduceTasks, mapf)
+		case Reduce:
+			performReduce(reply.TaskNum, reply.MapTasks, reducef)
 		case Done:
 			os.Exit(0)
+		default:
+			fmt.Errorf("bad task type: %s", reply.TaskType)
 		}
+
 	}
 	// uncomment to send the Example RPC to the coordinator.
 	CallExample()

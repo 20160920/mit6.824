@@ -22,16 +22,13 @@ type ExampleReply struct {
 	Y int
 }
 
-// JobCondition condition of job
-type JobCondition int
-
-// JobType type of job
-type JobType int
+// TaskCondition condition of job
+type TaskCondition int
 
 const (
-	JobWorking = iota
-	JobWaiting
-	JobDone
+	TaskWorking = iota
+	TaskWaiting
+	TaskDone
 )
 
 type Args struct{}
@@ -47,6 +44,13 @@ type Reply struct {
 
 	MapTasks int
 }
+
+type FinishedTaskArgs struct {
+	TaskType TaskType
+	TaskNum  int
+}
+
+type FinishedTaskReply struct{}
 
 type TaskType int
 

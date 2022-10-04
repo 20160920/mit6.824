@@ -1,14 +1,14 @@
 package mr
 
 import (
-	"fmt"
 	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
 	"sync"
+	"time"
 )
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
 
 var mu sync.Mutex
 
@@ -21,24 +21,74 @@ type Task struct {
 
 type Coordinator struct {
 	// Your definitions here.
-	UID     int
-	Map     chan *Task
-	Reducer chan *Task
+	mu sync.Mutex
 
-	ReducerNum int
-	MapNum     int
+	cond *sync.Cond
 
-	Status Condition
+	mapFiles    []string
+	mapTasks    int
+	reduceTasks int
+
+	mapTaskFinished    []bool
+	mapTaskIssued      []time.Time
+	reduceTaskFinished []bool
+	reduceTaskIssued   []time.Time
+
 	isDone bool
 }
 
-func (c *Coordinator) generateTaskId() int {
-	res := c.UID
-	c.UID++
-	return res
-}
-
 // Your code here -- RPC handlers for the worker to call.
+func (c *Coordinator) HandleTask(args *Task, reply *Reply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	reply.ReduceTasks = c.reduceTasks
+	reply.MapTasks = c.mapTasks
+
+	for {
+		mapDone := true
+		for m, done := range c.mapTaskFinished {
+			if !done {
+				if c.mapTaskIssued[m].IsZero() || time.Since(c.mapTaskIssued[m]).Seconds() > 10 {
+					reply.TaskType = Map
+					reply.TaskNum = m
+					reply.MapFile = c.mapFiles[m]
+					c.mapTaskIssued[m] = time.Now()
+				} else {
+					mapDone = false
+				}
+			}
+		}
+		if !mapDone {
+			c.cond.Wait()
+		} else {
+			break
+		}
+	}
+
+	for {
+		redDone := true
+		for r, done := range c.reduceTaskFinished {
+			if !done {
+				if c.reduceTaskIssued[r].IsZero() || time.Since(c.reduceTaskIssued[r]).Seconds() > 10 {
+					reply.TaskType = Reduce
+					reply.TaskNum = r
+					c.reduceTaskIssued[r] = time.Now()
+				} else {
+					redDone = false
+				}
+			}
+		}
+		if !redDone {
+
+		} else {
+			break
+		}
+	}
+	reply.TaskType = Done
+	c.isDone = true
+	return nil
+}
 
 //
 // an example RPC handler.
@@ -71,43 +121,54 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	mu.Lock()
-	defer mu.Unlock()
-	fmt.Println("Done!!!!!!")
-	return c.Status == AllDone
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.isDone
 }
 
 //
-// create a Coordinator.
-// main/mrcoordinator.go calls this function.
-// nReduce is the number of reduce tasks to use.
+// create a Coordinator
+// main/mrcoordinator.go calls this function
+// nReduce is the number of reduce tasks to use
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{
-		UID:        0,
-		Map:        make(chan *Task, len(files)),
-		Reducer:    make(chan *Task, nReduce),
-		ReducerNum: nReduce,
-		MapNum:     len(files),
-	}
+	c := Coordinator{}
 
-	c.makeMapJobs(files)
+	c.cond = sync.NewCond(&c.mu)
 
+	c.mapFiles = files
+	c.mapTasks = len(files)
+	c.mapTaskFinished = make([]bool, len(files))
+	c.mapTaskIssued = make([]time.Time, nReduce)
+
+	c.reduceTasks = nReduce
+	c.reduceTaskFinished = make([]bool, nReduce)
+	c.reduceTaskIssued = make([]time.Time, nReduce)
+
+	go func() {
+		for {
+			c.mu.Lock()
+			c.cond.Broadcast()
+			c.mu.Unlock()
+			time.Sleep(time.Second)
+		}
+	}()
 	c.server()
-
 	return &c
 }
 
-func (c *Coordinator) makeMapJobs(files []string) {
-	for _, v := range files {
-		id := c.generateTaskId()
-		task := Task{
-			TaskId:     id,
-			TaskType:   Map,
-			InputFile:  []string{v},
-			ReducerNum: c.ReducerNum,
-		}
-		c.Map <- &task
+func (c *Coordinator) HandleFinishedTask(args *FinishedTaskArgs, reply *FinishedTaskReply) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	switch args.TaskType {
+	case Map:
+		c.mapTaskFinished[args.TaskNum] = true
+	case Reduce:
+		c.reduceTaskFinished[args.TaskNum] = true
+	default:
+		log.Fatalf("bad finished task: %d", args.TaskType)
 	}
-	fmt.Println("making map tasks completed")
+	c.cond.Broadcast()
+	return nil
 }
